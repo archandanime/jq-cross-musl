@@ -1,0 +1,154 @@
+name: jq crossbuild package release
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_rerun:
+        description: "Skip rerun?"
+        required: true
+        default: true
+        type: boolean
+      retries:
+        description: "Number of rerun retries"
+        required: true
+        default: "5"
+        type: choice
+        options: ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      jq_version: ${{ steps.version_info.outputs.jq_version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          [
+          aarch64-linux-musl,
+          arm-linux-musleabi,
+          arm-linux-musleabihf,
+          armv6-linux-musleabihf,
+          armv7l-linux-musleabihf,
+          i686-linux-musl,
+          x86_64-linux-musl,
+          mips-linux-musl,
+          mipsel-linux-musl,
+          mips64-linux-musl,
+          mips64el-linux-musl,
+          powerpc-linux-musl,
+          powerpc64le-linux-musl,
+          s390x-linux-musl,
+          riscv64-linux-musl,
+          ]
+
+    name: jq ${{ matrix.arch }}
+
+    env:
+      github_branch: "master"
+      GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+
+    steps:
+      - name: Host - Checkout action
+        uses: actions/checkout@v3
+
+      - name: Host - Create docker multiarch ${{ matrix.arch }} container
+        run: docker run --name multiarch -it -d -e LDFLAGS=-s userdocs/qbt-mcm:${{ matrix.arch }}
+
+      - name: Host - Git clone jq
+        run: git clone --single-branch --branch "${{ env.github_branch }}" --shallow-submodules --recurse-submodules --depth 1 https://github.com/jqlang/jq jq
+
+      - name: Docker - bootstrap build container
+        run: |
+          docker exec multiarch apk update
+          docker exec multiarch apk upgrade
+
+      - name: Docker - bootstrap build tools
+        run: docker exec multiarch apk add git autoconf libtool
+
+      - name: Docker - jq - autoreconf
+        run: |
+          docker exec -w /root/jq multiarch git config --global --add safe.directory /root/jq
+          docker exec -w /root/jq multiarch autoreconf -i
+
+      - name: Docker - jq - configure
+        run: >
+          docker exec -w /root/jq multiarch ./configure
+          --host=${{ matrix.arch }}
+          --disable-docs
+          --disable-maintainer-mode
+          --disable-valgrind
+          --with-oniguruma=builtin
+          --enable-static
+          --enable-all-static
+
+      - name: Docker - jq - make
+        run: docker exec -w /root/jq multiarch make -j$(nproc)
+
+      - name: Host - jq - copy and rename
+        run: docker exec -w /root/jq multiarch cp -f jq /root/jq-${{ matrix.arch }}
+
+      - name: Host - file jq
+        run: file jq-${{ matrix.arch }}
+
+      - name: Docker - upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: "jq-${{ matrix.arch }}"
+          path: "jq-${{ matrix.arch }}"
+
+  release:
+    name: Upload artifacts to release
+    runs-on: ubuntu-latest
+    needs: build
+    if: always() && contains(needs.*.result, 'success') && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
+    env:
+      GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+      jq_version: ${{ needs.build.outputs.jq_version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Host - Download artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Host - artifacts organise for release
+        run: |
+          mkdir -p "releases"
+          for files in jq-*; do
+              cp -rf ${files}/* "releases/"
+          done
+
+      - name: Host - "Create release - tag - assets"
+        uses: ncipollo/release-action@v1
+        with:
+          prerelease: false
+          artifacts: releases/jq-*
+          replacesArtifacts: true
+          tag: jq-test
+          name: "jq test"
+          body: "jq built from github master using Debian crossbuild and statically linked"
+          allowUpdates: true
+
+  rerun-on-failure:
+    if: failure() && inputs.skip_rerun == '0'
+    name: rerun-on-failure
+    needs: release
+    permissions:
+      actions: write
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+    steps:
+      - uses: actions/checkout@v3
+      - name: Trigger rerun workflow on job failures
+        run: |
+          inputs_value="${{ inputs.retries }}"
+          gh workflow run rerun.yml -f run_id=${{ github.run_id }} -f attempts=${{ github.run_attempt }} -f retries=${inputs_value:-3}
