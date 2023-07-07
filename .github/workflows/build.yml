@@ -126,15 +126,19 @@ jobs:
               cp -rf ${files}/* "releases/"
           done
 
+
+      - name: Host - Get jq version
+        run: echo "jq_version=$(./jq-amd64 --version)" > $GITHUB_ENV
+
       - name: Host - "Create release - tag - assets"
         uses: ncipollo/release-action@v1
         with:
           prerelease: false
           artifacts: releases/jq-*
           replacesArtifacts: true
-          tag: jq-test
-          name: "jq test"
-          body: "jq built from github master using Debian crossbuild and statically linked"
+          tag: ${{ env.jq_version }}
+          name: "jq ${{ env.jq_version }}"
+          body: "jq built from github master and statically linked"
           allowUpdates: true
 
   rerun-on-failure:
