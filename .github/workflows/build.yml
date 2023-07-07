@@ -60,7 +60,7 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Host - Create docker multiarch ${{ matrix.arch }} container
-        run: docker run --name multiarch -it -d -e LDFLAGS=-s userdocs/qbt-mcm:${{ matrix.arch }}
+        run: docker run --name multiarch -it -d -e LDFLAGS=-s -v ${{ github.workspace }}:/root userdocs/qbt-mcm:${{ matrix.arch }}
 
       - name: Host - Git clone jq
         run: git clone --single-branch --branch "${{ env.github_branch }}" --shallow-submodules --recurse-submodules --depth 1 https://github.com/jqlang/jq jq
