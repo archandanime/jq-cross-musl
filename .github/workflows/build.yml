@@ -128,7 +128,7 @@ jobs:
 
 
       - name: Host - Get jq version
-        run: echo "jq_version=$(./jq-amd64 --version)" > $GITHUB_ENV
+        run: echo "jq_version=$(./releases/jq-amd64 --version)" > $GITHUB_ENV
 
       - name: Host - "Create release - tag - assets"
         uses: ncipollo/release-action@v1
